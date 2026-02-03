@@ -1,0 +1,90 @@
+#!/bin/bash
+TELEGRAM_USER_ID="5404518130"
+LOGFILE="/var/log/morning-briefing.log"
+TIMESTAMP=$(date -u +'%Y-%m-%d %H:%M UTC')
+echo "[$(date -u)] Starting morning briefing..." >> "$LOGFILE"
+MSGFILE=$(mktemp)
+echo "🌅 Good Morning! Daily Briefing - $TIMESTAMP" > "$MSGFILE"
+echo "" >> "$MSGFILE"
+
+# Weather
+echo "🌤️ WEATHER - Neston, UK" >> "$MSGFILE"
+echo "─────────────────────────" >> "$MSGFILE"
+WEATHER=$(curl -s "wttr.in/Neston,UK?format=%l:+%c+%t+Humidity:%h+Wind:%w" 2>/dev/null)
+echo "${WEATHER:-Weather data unavailable}" >> "$MSGFILE"
+echo "" >> "$MSGFILE"
+
+# Crypto prices with contract addresses
+echo "💰 CRYPTO PRICES (24h change)" >> "$MSGFILE"
+echo "─────────────────────────────" >> "$MSGFILE"
+
+# Major tokens (CoinGecko)
+get_cg() {
+    local id=$1 sym=$2
+    local d=$(curl -s "https://api.coingecko.com/api/v3/simple/price?ids=$id&vs_currencies=usd&include_24hr_change=true" 2>/dev/null)
+    local p=$(echo "$d" | jq -r ".${id}.usd // \"N/A\"" 2>/dev/null)
+    local c=$(echo "$d" | jq -r ".${id}.usd_24h_change // \"N/A\"" 2>/dev/null)
+    [ "$p" != \"null\" ] && [ "$p" != \"N/A\" ] && printf "%s: $%.2f (%.2f%%)" "$sym" "$p" "$c" || echo "$sym: N/A"
+}
+
+echo "MAJOR:" >> "$MSGFILE"
+get_cg bitcoin BTC >> "$MSGFILE" 2>/dev/null || echo "BTC: N/A" >> "$MSGFILE"
+get_cg ethereum ETH >> "$MSGFILE" 2>/dev/null || echo "ETH: N/A" >> "$MSGFILE"
+get_cg solana SOL >> "$MSGFILE" 2>/dev/null || echo "SOL: N/A" >> "$MSGFILE"
+get_cg pax-gold PAXG >> "$MSGFILE" 2>/dev/null || echo "PAXG: N/A" >> "$MSGFILE"
+echo "" >> "$MSGFILE"
+
+echo "SMALLER TOKENS:" >> "$MSGFILE"
+
+# DexScreener for smaller tokens
+get_ds() {
+    local addr=$1 sym=$2
+    local d=$(curl -s "https://api.dexscreener.com/latest/dex/tokens/$addr" 2>/dev/null)
+    local p=$(echo "$d" | jq -r '.pairs[0].priceUsd // "N/A"' 2>/dev/null)
+    local c=$(echo "$d" | jq -r '.pairs[0].priceChange.h1 // "N/A"' 2>/dev/null)
+    if [ "$p" != \"null\" ] && [ "$p" != \"N/A\" ] && [ -n "$p" ]; then
+        printf "%s: $%s (%.2f%%)" "$sym" "$p" "$c"
+    else
+        echo "$sym: N/A"
+    fi
+}
+
+# MOG - Ethereum
+get_ds 0xaaee1a9723aadb7afa2810263653a34ba2c21c7a MOG >> "$MSGFILE" 2>/dev/null || echo "MOG: N/A" >> "$MSGFILE"
+# KEYCAT - Solana (using address)
+get_ds 0x9a26F5433671751C3276a065f57e5a02D2817973 KEYCAT >> "$MSGFILE" 2>/dev/null || echo "KEYCAT: N/A" >> "$MSGFILE"
+# REI - Ethereum
+get_ds 0x5d251e38833766758c213711e5d5f7a9428a5093 REI >> "$MSGFILE" 2>/dev/null || echo "REI: N/A" >> "$MSGFILE"
+# KTA - Base (via DexScreener - should find it)
+get_ds 0xc0634090F2Fe6c6d75e61Be2b949464aBB498973 KTA >> "$MSGFILE" 2>/dev/null || echo "KTA: N/A" >> "$MSGFILE"
+# VIRTUAL - Base
+get_ds 0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b VIRTUAL >> "$MSGFILE" 2>/dev/null || echo "VIRTUAL: N/A" >> "$MSGFILE"
+# TIBBIR - Base
+get_ds 0xA4A2E2ca3fBfE21aed83471D28b6f65A233C6e00 TIBBIR >> "$MSGFILE" 2>/dev/null || echo "TIBBIR: N/A" >> "$MSGFILE"
+echo "" >> "$MSGFILE"
+
+# Tweets
+echo "🐦 TOP 5 CRYPTO TWEETS (Last 12h)" >> "$MSGFILE"
+echo "───────────────────────────────────" >> "$MSGFILE"
+TWELVE_HOURS_AGO=$(date -d "12 hours ago" +%s 2>/dev/null || date -u -v-12H +%s)
+TWEETS=$(bird home --following --count 50 --json 2>/dev/null)
+if [ -n "$TWEETS" ]; then
+    echo "$TWEETS" | jq -r ".[] | select(.created_at_timestamp > $TWELVE_HOURS_AGO) | select(.text | test(\"(?i)bitcoin|ethereum|solana|crypto\")) | \"• @\(.user.screen_name) (\(.favorite_count)❤️): \(.text[:80])\"" 2>/dev/null | head -5 >> "$MSGFILE" || echo "No recent tweets" >> "$MSGFILE"
+else
+    echo "Unable to fetch tweets" >> "$MSGFILE"
+fi
+echo "" >> "$MSGFILE"
+
+echo "🎯 FAVORITE TOKEN MENTIONS" >> "$MSGFILE"
+echo "─────────────────────────────" >> "$MSGFILE"
+for t in MOG KEYCAT KTA REI VIRTUAL TIBBIR; do
+    bird search "$t coin" --count 2 --json 2>/dev/null | jq -r '.[] | "• @\(.user.screen_name): \(.text[:60])..."' >> "$MSGFILE" 2>/dev/null
+done
+echo "" >> "$MSGFILE"
+echo "─────────────────────────────" >> "$MSGFILE"
+echo "Have a great day! 🚀" >> "$MSGFILE"
+
+MESSAGE=$(cat "$MSGFILE" | tr '\n' ' ')
+clawdbot message send --channel telegram --target "$TELEGRAM_USER_ID" --message "$MESSAGE" >> "$LOGFILE" 2>&1
+rm -f "$MSGFILE"
+echo "[$(date -u)] Morning briefing sent." >> "$LOGFILE"

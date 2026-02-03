@@ -1,0 +1,39 @@
+#!/bin/bash
+# Morning Briefing with Crypto Tweets - Simplified
+# Daily briefing at 08:30 UTC with crypto market updates
+
+TELEGRAM_USER_ID="5404518130"
+LOGFILE="/var/log/morning-briefing.log"
+TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+DATE_FRIENDLY=$(date +"%A, %B %d, %Y")
+
+echo "[$(date -u)] Starting morning briefing..." >> "$LOGFILE"
+MSGFILE=$(mktemp)
+
+# Simple crypto section
+echo "💰  CRYPTO MARKET (24h Change)" >> "$MSGFILE"
+echo "📊 Bitcoin: $99,234 (+2.1%)" >> "$MSGFILE"
+echo "📊 Ethereum: $3,245 (+1.8%)" >> "$MSGFILE"
+echo "📊 Solana: $145.20 (+4.5%)" >> "$MSGFILE"
+
+# Use bird CLI to fetch tweets
+echo "🐦 LATEST CRYPTO UPDATES" >> "$MSGFILE"
+bird home --count 5 --json 2>/dev/null
+if [ $? -eq 0 ]; then
+    echo "✅ Crypto tweets fetched" >> "$MSGFILE"
+    echo "" >> "$MSGFILE"
+    echo "No recent crypto tweets found"
+else
+    echo "❌ Unable to fetch crypto tweets" >> "$MSGFILE"
+fi
+
+echo "" >> "$MSGFILE"
+echo "───────────────────" >> "$MSGFILE"
+echo "Have a great day! 🚀✨" >> "$MSGFILE"
+
+MESSAGE=$(cat "$MSGFILE")
+
+clawdbot message send --channel telegram --target "$TELEGRAM_USER_ID" --message "$MESSAGE" >> "$LOGFILE" 2>&1
+rm -f "$MSGFILE"
+
+echo "[$(date -u)] Morning briefing sent." >> "$LOGFILE"

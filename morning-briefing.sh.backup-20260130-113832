@@ -1,0 +1,175 @@
+#!/bin/bash
+TELEGRAM_USER_ID="5404518130"
+LOGFILE="/var/log/morning-briefing.log"
+TIMESTAMP=$(date -u +'%Y-%m-%d %H:%M UTC')
+echo "[$(date -u)] Starting morning briefing..." >> "$LOGFILE"
+MSGFILE=$(mktemp)
+
+# Create jq filter for token detection with word boundaries
+cat > /tmp/token_filter.jq << "JQEOF"
+.[] | 
+select(.text | test("(?i)mog|keycat|kta|rei|virtual|tibbir")) |
+.text as $text |
+(
+    if (($text | contains("\u0024MOG")) or ($text | contains(" MOG")) or ($text | contains(",MOG")) or ($text | contains(".MOG")) or ($text | test(" MOG$"; "i"))) then "MOG"
+    elif (($text | contains("\u0024KEYCAT")) or ($text | contains(" KEYCAT")) or ($text | contains(",KEYCAT")) or ($text | contains(".KEYCAT")) or ($text | test(" KEYCAT$"; "i"))) then "KEYCAT"
+    elif (($text | contains("\u0024KTA")) or ($text | contains(" KTA")) or ($text | contains(",KTA")) or ($text | contains(".KTA")) or ($text | test(" KTA$"; "i"))) then "KTA"
+    elif (($text | contains("\u0024REI")) or ($text | contains(" REI")) or ($text | contains(",REI")) or ($text | contains(".REI")) or ($text | test(" REI$"; "i"))) then "REI"
+    elif (($text | contains("\u0024VIRTUAL")) or ($text | contains(" VIRTUAL")) or ($text | contains(",VIRTUAL")) or ($text | contains(".VIRTUAL")) or ($text | test(" VIRTUAL$"; "i"))) then "VIRTUAL"
+    elif (($text | contains("\u0024TIBBIR")) or ($text | contains(" TIBBIR")) or ($text | contains(",TIBBIR")) or ($text | contains(".TIBBIR")) or ($text | test(" TIBBIR$"; "i"))) then "TIBBIR"
+    else empty end
+) as $token |
+"\(.createdAt)|\(.author.username)|\(.likeCount)|\(.id)|\($token)|\(.text)"
+JQEOF
+
+# Translation function using LibreTranslate API
+translate_text() {
+    local text="$1"
+    local translated=$(curl -s "https://libretranslate.com/translate" \
+        -d "q=${text}" \
+        -d "source=auto" \
+        -d "target=en" \
+        -d "format=text" \
+        -H "Content-Type: application/x-www-form-urlencoded" 2>/dev/null | jq -r '\.translatedText // empty' 2>/dev/null)
+    if [ -n "$translated" ] && [ "$translated" != "$text" ]; then
+        echo "\n   🌐 Translation: $translated"
+    fi
+}
+
+# Build message with proper formatting
+{
+    echo "🌅 *Good Morning!* Daily Briefing — $TIMESTAMP"
+    echo ""
+    echo "🌤️ *WEATHER* — Neston, UK"
+    echo "─────────────────────────"
+    WEATHER=$(curl -s "wttr.in/Neston,UK?format=%l:+%c+%t+Humidity:%h+Wind:%w" 2>/dev/null)
+    echo "${WEATHER:-Weather data unavailable}"
+    echo ""
+    echo "💰 *CRYPTO PRICES* (24h change)"
+    echo "═══════════════════════════════"
+    echo ""
+    echo "*MAJOR:*"
+    
+    # Use CoinGecko for major native tokens
+    get_cg() {
+        local id=$1 sym=$2
+        local d=$(curl -s "https://api.coingecko.com/api/v3/simple/price?ids=$id&vs_currencies=usd&include_24hr_change=true" 2>/dev/null)
+        local p=$(echo "$d" | jq -r ".${id}.usd // \"N/A\"" 2>/dev/null)
+        local c=$(echo "$d" | jq -r ".${id}.usd_24h_change // \"N/A\"" 2>/dev/null)
+        if [ "$p" != "null" ] && [ "$p" != "N/A" ] && [ "$c" != "null" ] && [ "$c" != "N/A" ] && [ -n "$p" ]; then
+            printf "• %s: $%.2f (%.2f%%)\n" "$sym" "$p" "$c"
+        else
+            echo "• $sym: N/A"
+        fi
+    }
+    
+    get_cg bitcoin BTC
+    get_cg ethereum ETH
+    get_cg solana SOL
+    
+    # DexScreener for PAXG
+    get_ds() {
+        local addr=$1 sym=$2
+        local d=$(curl -s "https://api.dexscreener.com/latest/dex/tokens/$addr" 2>/dev/null)
+        local p=$(echo "$d" | jq -r '.pairs[0].priceUsd // "N/A"' 2>/dev/null)
+        local c=$(echo "$d" | jq -r '.pairs[0].priceChange.h1 // "N/A"' 2>/dev/null)
+        if [ "$p" != "null" ] && [ "$p" != "N/A" ] && [ "$c" != "null" ] && [ "$c" != "N/A" ] && [ -n "$p" ]; then
+            printf "• %s: $%s (%.2f%%)\n" "$sym" "$p" "$c"
+        else
+            echo "• $sym: N/A"
+        fi
+    }
+    
+    # PAXG
+    get_ds 0x45804880de22913dafe09f4980848ece6ecbaf78 PAXG
+    
+    echo ""
+    echo "*SMALLER TOKENS:*"
+    
+    # MOG
+    get_ds 0xaaee1a9723aadb7afa2810263653a34ba2c21c7a MOG
+    # KEYCAT
+    get_ds 0x9a26F5433671751C3276a065f57e5a02D2817973 KEYCAT
+    # REI
+    get_ds 0x6B2504A03ca4D43d0D73776F6aD46dAb2F2a4cFD REI
+    # KTA
+    get_ds 0xc0634090F2Fe6c6d75e61Be2b949464aBB498973 KTA
+    # VIRTUAL
+    get_ds 0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b VIRTUAL
+    # TIBBIR
+    get_ds 0xA4A2E2ca3fBfE21aed83471D28b6f65A233C6e00 TIBBIR
+    echo ""
+    echo "🐦 *TOP 5 CRYPTO TWEETS* (Last 12h)"
+    echo "───────────────────────────────────"
+    
+    # Get tweets from last 12 hours
+    TWEETS=$(bird home --following --count 100 --json 2>/dev/null)
+    TWELVE_HOURS_AGO=$(date -d "12 hours ago" +%s 2>/dev/null || date -u -v-12H +%s)
+    
+    if [ -n "$TWEETS" ]; then
+        TWEET_COUNT=0
+        echo "$TWEETS" | jq -r '.[] | select(.text | test("(?i)bitcoin|ethereum|solana|crypto")) | "\(.createdAt)|\(.author.username)|\(.likeCount)|\(.id)|\(.text)"' 2>/dev/null | while IFS="|" read -r created_at username likes tweet_id text; [ -z "" ] && continue; do
+            if [ $TWEET_COUNT -lt 5 ]; then
+                tweet_ts=$(date -d "$created_at" +%s 2>/dev/null)
+                if [ -n "$tweet_ts" ] && [ "$tweet_ts" -gt "$TWELVE_HOURS_AGO" ]; then
+                    echo "• @$username (${likes}❤️): ${text:0:60}..."
+                    echo "  https://x.com/$username/status/$tweet_id"
+                    # Check if translation needed and add it
+                    full_text="$text"
+                    if echo "$full_text" | LC_ALL=C grep -qP '[^\x00-\x7F]'; then
+                        translation=$(translate_text "$full_text" 2>/dev/null)
+                        if [ -n "$translation" ]; then
+                            echo "$translation"
+                        fi
+                    fi
+                    TWEET_COUNT=$((TWEET_COUNT + 1))
+                fi
+            fi
+        done
+        if [ $TWEET_COUNT -eq 0 ]; then
+            echo "No recent crypto tweets"
+        fi
+    else
+        echo "Unable to fetch tweets"
+    fi
+    echo ""
+    echo "🎯 *FAVORITE TOKEN TWEETS* (Last 12h, max 5)"
+    echo "─────────────────────────────"
+    
+    # Get favorite token tweets from timeline using jq file
+    if [ -n "$TWEETS" ]; then
+        MENTION_COUNT=0
+        echo "$TWEETS" | jq -rf /tmp/token_filter.jq 2>/dev/null | while IFS="|" read -r created_at username likes tweet_id token text; do
+            if [ $MENTION_COUNT -ge 5 ]; then
+                break
+            fi
+            tweet_ts=$(date -d "$created_at" +%s 2>/dev/null)
+            if [ -n "$tweet_ts" ] && [ "$tweet_ts" -gt "$TWELVE_HOURS_AGO" ]; then
+                echo "• [$token] @$username (${likes}❤️): ${text:0:60}..."
+                echo "  https://x.com/$username/status/$tweet_id"
+                # Check if translation needed and add it
+                if echo "$text" | LC_ALL=C grep -qP '[^\x00-\x7F]'; then
+                    translation=$(translate_text "$text" 2>/dev/null)
+                    if [ -n "$translation" ]; then
+                        echo "$translation"
+                    fi
+                fi
+                MENTION_COUNT=$((MENTION_COUNT + 1))
+            fi
+        done
+        if [ $MENTION_COUNT -eq 0 ]; then
+            echo "No recent favorite token tweets"
+        fi
+    else
+        echo "Unable to fetch tweets"
+    fi
+    echo ""
+    echo "─────────────────────────────"
+    echo "Have a great day! 🚀"
+} > "$MSGFILE"
+
+# Send message preserving newlines
+MESSAGE=$(cat "$MSGFILE")
+clawdbot message send --channel telegram --target "$TELEGRAM_USER_ID" --message "$MESSAGE" >> "$LOGFILE" 2>&1
+rm -f "$MSGFILE"
+echo "[$(date -u)] Morning briefing sent." >> "$LOGFILE"

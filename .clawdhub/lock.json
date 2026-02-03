@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "skills": {
+    "youtube-watcher": {
+      "version": "1.0.0",
+      "installedAt": 1769953207940
+    },
+    "coding-agent": {
+      "version": "1.0.1",
+      "installedAt": 1769964614869
+    },
+    "agent-browser-clawdbot": {
+      "version": "0.1.0",
+      "installedAt": 1770059754173
+    },
+    "agent-browser": {
+      "version": "0.2.0",
+      "installedAt": 1770061177606
+    }
+  }
+}

@@ -1,0 +1,153 @@
+#!/bin/bash
+
+TELEGRAM_USER_ID="5404518130"
+LOGFILE="/var/log/morning-briefing.log"
+TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+echo "[$(date -u)] Starting morning briefing..." >> "$LOGFILE"
+
+MSGFILE=$(mktemp)
+
+echo "🌅 Good Morning! Daily Briefing - $TIMESTAMP" > "$MSGFILE"
+echo "" >> "$MSGFILE"
+
+# WEATHER
+echo "🌤️ WEATHER - Neston, UK" >> "$MSGFILE"
+echo "─────────────────────────" >> "$MSGFILE"
+WEATHER=$(curl -s "wttr.in/Neston,UK?format=%l:+%c+%t+Humidity:%h+Wind:%w" 2>/dev/null)
+echo "${WEATHER:-Weather data unavailable}" >> "$MSGFILE"
+echo "" >> "$MSGFILE"
+
+# CRYPTO PRICES
+echo "💰 CRYPTO PRICES (24h change)" >> "$MSGFILE"
+echo "─────────────────────────────" >> "$MSGFILE"
+
+# CoinGecko prices
+get_cg_price() {
+    local id=$1
+    local symbol=$2
+    local data=$(curl -s "https://api.coingecko.com/api/v3/simple/price?ids=$id&vs_currencies=usd&include_24hr_change=true" 2>/dev/null)
+    local price=$(echo "$data" | jq -r ".${id}.usd // \"N/A\"" 2>/dev/null)
+    local change=$(echo "$data" | jq -r ".${id}.usd_24h_change // \"N/A\"" 2>/dev/null)
+    
+    if [ "$price" != "null" ] && [ "$price" != "N/A" ] && [ -n "$price" ]; then
+        if [ $(echo "$price < 1" | bc -l 2>/dev/null || echo "0") -eq 1 ]; then
+            price_fmt=$(printf "$%.6f" "$price")
+        else
+            price_fmt=$(printf "$%.2f" "$price")
+        fi
+        
+        if [ "$change" != "null" ] && [ "$change" != "N/A" ] && [ -n "$change" ]; then
+            if [ $(echo "$change > 0" | bc -l 2>/dev/null || echo "0") -eq 1 ]; then
+                change_fmt="📈 +$(printf "%.2f" "$change")%%"
+            else
+                change_fmt="📉 $(printf "%.2f" "$change")%%"
+            fi
+        else
+            change_fmt="N/A"
+        fi
+        
+        printf "%s: %s (%s)" "$symbol" "$price_fmt" "$change_fmt"
+    else
+        echo "$symbol: N/A"
+    fi
+}
+
+# DexScreener prices
+get_dex_price() {
+    local symbol=$1
+    local data=$(curl -s "https://api.dexscreener.com/latest/dex/search/?query=$symbol" 2>/dev/null)
+    
+    if [ -n "$data" ]; then
+        local price=$(echo "$data" | jq -r ".data.pairs[0].priceUsd // \"N/A\"" 2>/dev/null)
+        local change=$(echo "$data" | jq -r ".data.pairs[0].priceChange.h1 // \"N/A\"" 2>/dev/null)
+        
+        if [ "$price" != "null" ] && [ "$price" != "N/A" ] && [ -n "$price" ]; then
+            if [ $(echo "$price < 0.0001" | bc -l 2>/dev/null || echo "0") -eq 1 ]; then
+                price_fmt=$(printf "$%.10f" "$price")
+            elif [ $(echo "$price < 1" | bc -l 2>/dev/null || echo "0") -eq 1 ]; then
+                price_fmt=$(printf "$%.6f" "$price")
+            else
+                price_fmt=$(printf "$%.2f" "$price")
+            fi
+            
+            if [ "$change" != "null" ] && [ "$change" != "N/A" ] && [ -n "$change" ]; then
+                if [ $(echo "$change > 0" | bc -l 2>/dev/null || echo "0") -eq 1 ]; then
+                    change_fmt="📈 +$(printf "%.2f" "$change")%%"
+                else
+                    change_fmt="📉 $(printf "%.2f" "$change")%%"
+                fi
+            else
+                change_fmt="N/A"
+            fi
+            
+            printf "%s: %s (%s)" "$symbol" "$price_fmt" "$change_fmt"
+            return
+        fi
+    fi
+    
+    echo "$symbol: Checking..."
+}
+
+echo "MAJOR:" >> "$MSGFILE"
+get_cg_price "bitcoin" "BTC" >> "$MSGFILE" 2>/dev/null || echo "BTC: Error" >> "$MSGFILE"
+get_cg_price "ethereum" "ETH" >> "$MSGFILE" 2>/dev/null || echo "ETH: Error" >> "$MSGFILE"
+get_cg_price "solana" "SOL" >> "$MSGFILE" 2>/dev/null || echo "SOL: Error" >> "$MSGFILE"
+get_cg_price "pax-gold" "PAXG" >> "$MSGFILE" 2>/dev/null || echo "PAXG: Error" >> "$MSGFILE"
+echo "" >> "$MSGFILE"
+
+echo "SMALLER:" >> "$MSGFILE"
+get_dex_price "MOG" >> "$MSGFILE" 2>/dev/null || echo "MOG: Error" >> "$MSGFILE"
+get_dex_price "KEYCAT" >> "$MSGFILE" 2>/dev/null || echo "KEYCAT: Error" >> "$MSGFILE"
+get_dex_price "KTA" >> "$MSGFILE" 2>/dev/null || echo "KTA: Error" >> "$MSGFILE"
+get_dex_price "REI" >> "$MSGFILE" 2>/dev/null || echo "REI: Error" >> "$MSGFILE"
+get_dex_price "VIRTUAL" >> "$MSGFILE" 2>/dev/null || echo "VIRTUAL: Error" >> "$MSGFILE"
+get_dex_price "TIBBIR" >> "$MSGFILE" 2>/dev/null || echo "TIBBIR: Error" >> "$MSGFILE"
+echo "" >> "$MSGFILE"
+
+# TOP CRYPTO TWEETS
+echo "🐦 TOP 5 CRYPTO TWEETS (Last 12h)" >> "$MSGFILE"
+echo "───────────────────────────────────" >> "$MSGFILE"
+
+if date -d "12 hours ago" >/dev/null 2>&1; then
+    TWELVE_HOURS_AGO=$(date -d "12 hours ago" +%s)
+else
+    TWELVE_HOURS_AGO=$(date -u -v-12H +%s)
+fi
+
+TWEETS=$(bird home --following --count 50 --json 2>/dev/null)
+
+if [ -n "$TWEETS" ]; then
+    echo "$TWEETS" | jq -r ".[] | select(.created_at_timestamp > $TWELVE_HOURS_AGO) | select(.text | test(\"(?i)bitcoin|ethereum|solana|crypto|defi|\\\\$BTC|\\\\$ETH|\\\\$SOL\")) | {text: .text[:100], author: .user.screen_name, likes: .favorite_count} | \"• @\(.author) (\(.likes)❤️): \(.text)\"" 2>/dev/null | head -5 >> "$MSGFILE" || echo "No recent crypto tweets" >> "$MSGFILE"
+else
+    echo "Unable to fetch tweets" >> "$MSGFILE"
+fi
+echo "" >> "$MSGFILE"
+
+# FAVORITE TOKEN MENTIONS
+echo "🎯 FAVORITE TOKEN MENTIONS (Last 12h)" >> "$MSGFILE"
+echo "─────────────────────────────────────────" >> "$MSGFILE"
+echo "Tokens: $MOG, $KEYCAT, $KTA, $REI, $VIRTUAL, $TIBBIR" >> "$MSGFILE"
+echo "" >> "$MSGFILE"
+
+for token in "MOG coin" "KEYCAT crypto" "KTA token" "REI network"; do
+    SEARCH=$(bird search "$token" --count 2 --json 2>/dev/null)
+    if [ -n "$SEARCH" ]; then
+        echo "$SEARCH" | jq -r ".[] | \"• @\(.user.screen_name): \(.text[:70])... (\(.favorite_count)❤️)\"" 2>/dev/null >> "$MSGFILE"
+    fi
+done
+
+if ! grep -q "• @" "$MSGFILE" | tail -1; then
+    echo "No recent mentions found" >> "$MSGFILE"
+fi
+echo "" >> "$MSGFILE"
+
+echo "─────────────────────────────────────────" >> "$MSGFILE"
+echo "Have a great day! 🚀" >> "$MSGFILE"
+
+# Send message
+MESSAGE=$(cat "$MSGFILE" | tr "\n" " ")
+clawdbot message send --channel telegram --target "$TELEGRAM_USER_ID" --message "$MESSAGE" >> "$LOGFILE" 2>&1
+
+rm -f "$MSGFILE"
+echo "[$(date -u)] Morning briefing sent." >> "$LOGFILE"

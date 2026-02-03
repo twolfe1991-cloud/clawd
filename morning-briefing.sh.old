@@ -1,0 +1,185 @@
+#!/bin/bash
+# Morning Briefing - Final Version with Lock File
+# Prevents duplicate execution with lock file mechanism
+
+TELEGRAM_USER_ID="5404518130"
+LOGFILE="/var/log/morning-briefing.log"
+LOCKFILE="/tmp/morning-briefing.lock"
+LOCK_TIMEOUT=300  # 5 minutes
+MESSAGE_FILE="/tmp/morning-briefing.msg"
+
+# Function to acquire lock
+acquire_lock() {
+    # Check if lock exists and is fresh
+    if [ -f "$LOCKFILE" ]; then
+        # Check age of lock file
+        lock_age=$(($(date +%s) - $(stat -c %Y "$LOCKFILE" | cut -d. -f1)))
+        
+        if [ "$lock_age" -lt "$LOCK_TIMEOUT" ]; then
+            # Lock is too recent - another process might be running
+            echo "[$(date -u)] ⚠️ Lock file exists and is recent. Skipping to prevent conflicts." >> "$LOGFILE"
+            return 1
+        else
+            # Lock is old or doesn't exist - safe to remove
+            rm -f "$LOCKFILE" 2>/dev/null
+            return 0
+    fi
+    
+    # Create lock file
+    echo "$$" > "$LOCKFILE"
+    echo "[$(date -u)] Lock acquired (PID: $$)" >> "$LOGFILE"
+    return 0
+}
+
+# Function to release lock
+release_lock() {
+    if [ -f "$LOCKFILE" ]; then
+        rm -f "$LOCKFILE" 2>/dev/null
+        echo "[$(date -u)] Lock released" >> "$LOGFILE"
+    fi
+}
+
+# Main script
+# Try to acquire lock
+if ! acquire_lock; then
+    echo "[$(date -u)] ❌ Could not acquire lock. Another instance may be running." >> "$LOGFILE"
+    exit 1
+fi
+
+# Trap to release lock on exit or error
+trap release_lock EXIT INT TERM
+
+# Set cleanup on exit
+cleanup() {
+    if [ -f "$MESSAGE_FILE" ]; then
+        rm -f "$MESSAGE_FILE" 2>/dev/null
+    fi
+}
+
+trap cleanup EXIT
+
+# Build message directly to file
+{
+    echo "**☀️ GOOD MORNING, TOM! ☀️**"
+    echo "" >> "$MESSAGE_FILE"
+    echo "📍 Neston, UK • $(date +"%A, %B %d, %Y") • $(date -u +"%Y-%m-%d %H:%M UTC")"
+    echo "" >> "$MESSAGE_FILE"
+    echo "───────────────────" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    echo "🌤️  WEATHER" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    
+    # Get weather
+    WEATHER=$(curl -s "wttr.in/Neston,UK?format=%l:+%c+%t+Humidity:%h+Wind:%w" 2>/dev/null)
+    echo "${WEATHER:-Weather data unavailable}" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    echo "───────────────────" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    echo "💰  CRYPTO MARKET (24h Change)" >> "$MESSAGE_FILE"
+    
+    # CoinGecko for major tokens (using Bash functions)
+    get_cg() {
+        local id=$1 sym=$2
+        local d=$(curl -s "https://api.coingecko.com/api/v3/simple/price?ids=$id&vs_currencies=usd&include_24hr_change=true" 2>/dev/null)
+        local p=$(echo "$d" | jq -r ".${id}.usd // \"N/A\"" 2>/dev/null)
+        local c=$(echo "$d" | jq -r ".${id}.usd_24h_change // \"N/A\"" 2>/dev/null)
+        if [ "$p" != "null" ] && [ "$p" != "N/A" ] && [ "$c" != "null" ] && [ "$c" != "N/A" ] && [ "$c" != "null" ] && [ -n "$p" ]; then
+            local emoji="📈"
+            if (( $(echo "$c < 0" | bc -l 2>/dev/null || echo "0") )); then
+                emoji="📉"
+            fi
+            printf "  %s  \$%-12s %+.2f%%\n" "$sym" "$emoji" "$p" "$c"
+        else
+            echo "  $sym: N/A"
+        fi
+    }
+    
+    echo "🏛️  MAJOR ASSETS" >> "$MESSAGE_FILE"
+    get_cg bitcoin BTC
+    get_cg ethereum ETH
+    get_cg solana SOL
+    
+    echo "" >> "$MESSAGE_FILE"
+    echo "───────────────────" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    echo "💎  SMALLER TOKENS" >> "$MESSAGE_FILE"
+    
+    # DexScreener for other tokens
+    get_ds() {
+        local addr=$1 sym=$2
+        local d=$(curl -s "https://api.dexscreener.com/latest/dex/tokens/$addr" 2>/dev/null)
+        local p=$(echo "$d" | jq -r '.pairs[0].priceUsd // "N/A"' 2>/dev/null)
+        local c=$(echo "$d" | jq -r '.pairs[0].priceChange.h1 // "N/A"' 2>/dev/null)
+        if [ "$p" != "null" ] && [ "$p" != "N/A" ] && [ "$c" != "null" ] && [ "$c" != "N/A" ] && [ -n "$p" ]; then
+            local emoji="📈"
+            if (( $(echo "$c < 0" | bc -l 2>/dev/null || echo "0") )); then
+                emoji="📉"
+            fi
+            printf "  %-8s \$%s %+.2f%%\n" "$sym" "$emoji" "$p" "$c"
+        else
+            echo "  $sym: N/A"
+        fi
+    }
+    
+    get_ds 0x45804880de22913dafe09f4980848ece6ecbaf78 PAXG
+    get_ds 0xaaee1a9723aadb7afa2810263653a34ba2c21c7a MOG
+    get_ds 0x9a26F5433671751C3276a065f57e5a02D2817973 KEYCAT
+    get_ds 0x6B2504A03ca4D43d0D73776F6aD46dAb2F2a4cFD REI
+    get_ds 0xc0634090F2Fe6c6d75e61Be2b949464aBB498973 KTA
+    get_ds 0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b VIRTUAL
+    get_ds 0xA4A2E2ca3fBfE21aed83471D28b6f65A233C6e00 TIBBIR
+    
+    echo "" >> "$MESSAGE_FILE"
+    echo "───────────────────" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    echo "🐦  TOP CRYPTO TWEETS (Last 12h)" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    
+    # Check if bird CLI is available
+    if command -v bird >/dev/null 2>&1; then
+        # Use bird CLI to fetch actual tweets
+        echo "🐦  LATEST CRYPTO UPDATES" >> "$MESSAGE_FILE"
+        echo "" >> "$MESSAGE_FILE"
+        
+        BIRD_OUTPUT=$(bird home --following --count 100 --json 2>/dev/null)
+        
+        if [ -n "$BIRD_OUTPUT" ]; then
+            # Check if we got tweets
+            BIRD_COUNT=$(echo "$BIRD_OUTPUT" | jq -r 'length // empty')
+            
+            if [ "$BIRD_COUNT" -gt 0 ]; then
+                echo "📊 Found $BIRD_COUNT crypto-related tweets" >> "$MESSAGE_FILE"
+                
+                # Show top 3 tweets by likes
+                echo "$BIRD_OUTPUT" | jq -r '[.[] | select(.text | test("(?i)bitcoin|ethereum|solana|crypto|btc|eth|defi|web3|blockchain|nft|token")) | "\(.createdAt)|\(.author.username)|\(.likeCount)|\(.id)|\(.text)"' 2>/dev/null | jq -r '[.[] | sort_by(.likeCount) | reverse | limit(3)] | .[] | " @ \(.author.username) + " (" + (.likeCount|tostring) + "❤️): " + .text[0:100] + "..."\"' >> "$MESSAGE_FILE"
+            else
+                echo "❌ No tweets found" >> "$MESSAGE_FILE"
+        else
+            echo "⚠️  Bird CLI not available" >> "$MESSAGE_FILE"
+    fi
+    
+    echo "" >> "$MESSAGE_FILE"
+    echo "───────────────────" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    echo "🎯  FAVORITE TOKENS ACTIVITY (Last 12h)" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    echo "⚠️  Note: Token monitoring requires additional setup - disabled for now" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    echo "───────────────────" >> "$MESSAGE_FILE"
+    echo "" >> "$MESSAGE_FILE"
+    echo "Have an amazing day! 🚀✨" >> "$MESSAGE_FILE"
+    
+    # Read message file
+    MESSAGE=$(cat "$MESSAGE_FILE")
+    
+    # Send via Telegram
+    clawdbot message send --channel telegram --target "$TELEGRAM_USER_ID" --message "$MESSAGE" >> "$LOGFILE" 2>&1
+    
+    # Cleanup
+    rm -f "$MESSAGE_FILE"
+    
+    echo "[$(date -u)] Morning briefing sent." >> "$LOGFILE"
+} >> "$MESSAGE_FILE"
+
+# Read and execute
+source "$MESSAGE_FILE"

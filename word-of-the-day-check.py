@@ -111,7 +111,7 @@ def send_telegram_message(message):
     cmd = [
         "clawdbot", "message", "send",
         "--channel", "telegram",
-        "--to", TELEGRAM_USER_ID,
+        "--target", TELEGRAM_USER_ID,
         "--message", message
     ]
     subprocess.run(cmd, check=True)
@@ -172,7 +172,7 @@ def check_new_emails():
 
 def main():
     """Main function"""
-    new_words = check_new_words()
+    new_words = check_new_emails()
 
     if not new_words:
         print("No new Word of the Day emails found")

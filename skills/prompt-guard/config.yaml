@@ -1,0 +1,36 @@
+# Prompt Guard Configuration
+
+# Owner ID - Your Telegram user ID
+owner_id: "5404518130"
+
+# HiveFence API (optional - for distributed threat intelligence)
+# Get your key from: https://hivefence.com
+hivefence_api_key: ""
+
+# Sensitivity Level
+# Options: low, medium, high, paranoid
+sensitivity: "medium"
+
+# Auto-reporting (sends HIGH+ detections to owner)
+auto_report: true
+
+# Auto-fetch patterns (fetches latest patterns on startup)
+auto_fetch_patterns: true
+
+# Enable/disable individual defenses
+defenses:
+  instruction_override: true
+  role_manipulation: true
+  fake_system: true
+  jailbreak: true
+  data_exfil: true
+  social_eng: true
+  privilege_escalation: true
+  context_manip: true
+  obfuscation: true
+  token_smuggling: true
+  secret_protection: true
+
+# Logging
+log_level: "info"  # debug, info, warn, error
+log_path: "/root/clawd/memory/prompt-guard.log"

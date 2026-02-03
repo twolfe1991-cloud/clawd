@@ -5,6 +5,9 @@
 *.key
 *.pem
 
+# State files
+.word_of_the_day_state.json
+
 # Python
 __pycache__/
 *.py[cod]
